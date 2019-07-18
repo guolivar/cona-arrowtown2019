@@ -45,7 +45,7 @@ for (i in (1:nsites)){
 }
 
 # Choose ODIN
-i_dev <- grep(x=curr_data$ODIN,pattern = 'Dev2')
+i_dev <- grep(x=curr_data$ODIN,pattern = '0184')
 
 ## Get the timeseries data #####
 # UTC time start
@@ -53,6 +53,7 @@ x_now <- Sys.time()
 print(x_now)
 # UTC time start
 t_start <- as.numeric(as.POSIXct("2018/08/02 12:00:00",tz = "GMT-12"))
+
 # UTC time end ... now
 t_end <- floor(as.numeric(x_now))
 # Set the averaging interval
