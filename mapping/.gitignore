@@ -1,1 +1,7 @@
 .httr-oauth
+all*.txt
+all*.tgz
+*.pdf
+*.nc
+*.Rdata
+
