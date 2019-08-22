@@ -45,7 +45,7 @@ for (i in (1:nsites)){
 }
 
 # Choose ODIN
-i_dev <- grep(x=curr_data$ODIN,pattern = '0184')
+i_dev <- grep(x=curr_data$ODIN,pattern = '0180')
 
 ## Get the timeseries data #####
 # UTC time start

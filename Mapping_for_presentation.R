@@ -13,7 +13,7 @@ library(RNetCDF)
 library(RJSONIO)
 library(curl)
 library(base64enc)
-library(zoo)
+
 library(openair)
 library(stringi)
 library(viridis)
@@ -25,6 +25,7 @@ library(twitteR)
 library(parallel)
 library(doParallel)
 
+#####################################
 setup_twitter_oauth(consumer_key = "XSAlq3HMJyH1tQlYrgnGque8F",
                    access_token = "1144053097313886208-DIVDY1F2jqh0pNbtJFz7Nxja3It3Xt",
                    consumer_secret = "1NOYPT7iJ3tF66NK333xcNe8mOjf15WoZGXDsjuK1jVG5dvOPJ",
@@ -81,12 +82,14 @@ for (i in (1:ndevices)){
 
 ## Get the timeseries data #####
 # UTC time start ... 24 hours ago
-x_now <- Sys.time()
+# x_now <- Sys.time()
 # This is to make a run in the past
-#x_now <- as.POSIXct("2019-07-16 18:00:00")
+# July 26, 2019 0:0:0 
+x_now <- as.POSIXct("2019-07-26 02:00:00")
 print(x_now)
-x_start <- x_now - 24 * 3600
-t_start <- floor(as.numeric(x_now) - 24 * 3600)
+# July 25, 2019 1:00:00 
+x_start <- as.POSIXct("2019-07-25 01:00:00")
+t_start <- floor(as.numeric(x_start))
 # UTC time end ... now
 t_end <- floor(as.numeric(x_now))
 # Set the averaging interval
@@ -95,46 +98,31 @@ time_avg <- '15 min'
 ndata <- 1
 nstep <- 1
 print("Getting data")
-base_url <- "https://dashboard.hologram.io/api/1/csr/rdm?"
 
-while (ndata >= 1){
-  if (nstep == 1){
-    print("First 1000 fetch")
-    print(nstep)
-    built_url <- paste0(base_url,
-                        "topicnames=",wanted_tags,"&",
-                        "timestart=",t_start,"&",
-                        "timeend=",t_end,"&",
-                        "limit=1000&",
-                        "orgid=",secret_hologram$orgid,"&",
-                        "apikey=",secret_hologram$apikey)
-    req2 <- curl_fetch_memory(built_url)
-    jreq2_tmp <- fromJSON(rawToChar(req2$content))$data
-    jreq2 <- jreq2_tmp
-  } else {
+base_url <- "https://dashboard.hologram.io/api/1/csr/rdm?"
+print("First 1000 fetch")
+print(nstep)
+built_url <- paste0(base_url,
+                    "topicnames=",wanted_tags,"&",
+                    "timestart=",t_start,"&",
+                    "timeend=",t_end,"&",
+                    "limit=1000&",
+                    "orgid=",secret_hologram$orgid,"&",
+                    "apikey=",secret_hologram$apikey)
+req2 <- curl_fetch_memory(built_url)
+jreq2_tmp <- fromJSON(rawToChar(req2$content))$data
+jreq2 <- jreq2_tmp
+
+base_url <- "https://dashboard.hologram.io"
+
+while (fromJSON(rawToChar(req2$content))$continues){
     print("Next 1000 fetch")
-    print(nstep)
     built_url <- paste0(base_url,
-                        "topicnames=",wanted_tags,"&",
-                        "timestart=",t_start,"&",
-                        "timeend=",t_end,"&",
-                        "limit=1000&",
-                        "startat=",startat,"&",
-                        "orgid=",secret_hologram$orgid,"&",
-                        "apikey=",secret_hologram$apikey)
+                        fromJSON(rawToChar(req2$content))$links[3])
     req2 <- curl_fetch_memory(built_url)
     jreq2_tmp <- fromJSON(rawToChar(req2$content))$data
     jreq2 <- append(jreq2,fromJSON(rawToChar(req2$content))$data)
   }
-  
-  print(ndata <- length(jreq2_tmp))
-  if (ndata < 1){
-    break
-  }
-  startat <- fromJSON(rawToChar(req2$content))$lastid
-  nstep <- nstep + 1
-  print(jreq2_tmp[[ndata]]$logged)
-}
 
 ndata <- length(jreq2)
 print("Got data")
@@ -258,16 +246,23 @@ if (location_ok){
 cl <- makeCluster(2) #not to overload your computer
 registerDoParallel(cl)
 
-all_data.tavg <- foreach(i=1:length(device_ids),.packages=c("openair"),.combine=rbind) %dopar%
+all_data.tavg <- foreach(i=1:length(device_ids),.packages=c("openair","zoo"),.combine=rbind) %dopar%
 {
   device_now <- subset(all_devices,id==device_ids[i])
   some_data <- subset(all_data, serialn == device_now$name)
+  some_data <- subset(some_data,date >= x_start)
   avg_data <- timeAverage(some_data,
                           avg.time = time_avg,
-                          start.date = strftime(x_start, format = "%Y-%m-%d %H:00:00"))
+                          start.date = strftime(x_start, format = "%Y-%m-%d %H:00:00"),
+                          fill = TRUE)
+  avg_data$mindate <- min(avg_data$date)
   avg_data$serialn <- subset(all_devices,id==device_ids[i])$name
   avg_data$lat <- NA
   avg_data$lon <- NA
+  avg_data$PM2.5 <- rollmean(avg_data$PM2.5,
+                             4,
+                             fill = c('extend','extend','extend'),
+                             align = 'center')
   ### Get LAT LON from curr_data
   if (is.numeric(subset(curr_data, ODIN == device_now$name)$lat)){
     avg_data$lat <- subset(curr_data, ODIN == device_now$name)$lat
@@ -307,7 +302,7 @@ RCurl::ftpUpload(paste0(data_path,
                         format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
                         format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
                         ".png"),
-                 paste0("ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/",
+                 paste0("ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/25_July/",
                         't_series_',
                         format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
                         format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
@@ -347,7 +342,7 @@ RCurl::ftpUpload(paste0(data_path,
                         format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
                         format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
                         ".tgz"),
-                 paste0("ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/",
+                 paste0("ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/25_July/",
                         'all_data_',
                         format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
                         format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
@@ -357,7 +352,7 @@ RCurl::ftpUpload(paste0(data_path,
                         format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
                         format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
                         ".tgz"),
-                 paste0("ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/",
+                 paste0("ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/25_July/",
                         'all_dataAVG_',
                         format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
                         format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
@@ -365,11 +360,6 @@ RCurl::ftpUpload(paste0(data_path,
 
 
 
-updateStatus("Latest time series from Arrowtown - UTC time", mediaPath = paste0(data_path,
-                                                                     't_series_',
-                                                                     format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
-                                                                     format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
-                                                                     ".png"))
 system(paste0('rm -f ',
               data_path,
               'all_dataAVG',
@@ -752,7 +742,7 @@ if (location_ok){
                 "idw/",
                 format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
                 format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
-                ".mp4 --playlist=\"Arrowtown 2019 - ODIN\""))
+                ".mp4 --playlist=\"Arrowtown 25th July 2019 - ODIN\""))
 
   print("Upload Krige to youtube")
   system(paste0("youtube-upload --title=\"Arrowtown ",
@@ -764,15 +754,16 @@ if (location_ok){
                 "autokrig/",
                 format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
                 format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
-                ".mp4 --playlist=\"Arrowtown 2019 - ODIN - AutoKrige\""))
+                ".mp4 --playlist=\"Arrowtown 25th July 2019 - ODIN - AutoKrige\""))
 
   # Upload files
   print("Upload NC files")
   RCurl::ftpUpload(paste0(data_path,"odin_idw.nc"),
-                   "ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/odin_idw.nc")
+                   "ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/25_July/odin_idw.nc")
   RCurl::ftpUpload(paste0(data_path,"odin_idw2.nc"),
-                   "ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/odin_idw2.nc")
-
+                   "ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/25_July/odin_idw2.nc")
+  RCurl::ftpUpload(paste0(data_path,"odin_krig.nc"),
+                   "ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/25_July/odin_krig.nc")
 }
 
 ## Remove files ####
@@ -801,4 +792,3 @@ system(paste0('rm -f ',
 system('mv *.tgz data_compressed/')
 system('mv t_series*.png timeseries/')
 
-updateStatus("Arrowtown script finised OK!")

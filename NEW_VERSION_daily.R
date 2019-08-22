@@ -13,7 +13,7 @@ library(RNetCDF)
 library(RJSONIO)
 library(curl)
 library(base64enc)
-library(zoo)
+#library(zoo)
 library(openair)
 library(stringi)
 library(viridis)
@@ -83,7 +83,7 @@ for (i in (1:ndevices)){
 # UTC time start ... 24 hours ago
 x_now <- Sys.time()
 # This is to make a run in the past
-#x_now <- as.POSIXct("2019-07-16 18:00:00")
+#x_now <- as.POSIXct("2019-07-04 18:00:00")
 print(x_now)
 x_start <- x_now - 24 * 3600
 t_start <- floor(as.numeric(x_now) - 24 * 3600)
@@ -209,8 +209,8 @@ wrong_dates <- which(is.na(all_data$date) | (all_data$date <= as.POSIXct("2018/0
 tmp_error_catching <- try(all_data$date[wrong_dates] <- all_data$timestamp[wrong_dates],
                           silent = TRUE)
 # Clock in device ahead of server logging time ... wrong date ... replace with server logging date
-wrong_dates <- which((all_data$date - all_data$timestamp) > 0)
-tmp_error_catching <- try(all_data$date[wrong_dates] <- all_data$timestamp[wrong_dates],
+wrong_dates <- which((c_data$date - c_data$timestamp) > 0)
+tmp_error_catching <- try(c_data$date[wrong_dates] <- c_data$timestamp[wrong_dates],
                           silent = TRUE)
 # No timestamp and no clock ... wrong date ... catchall step, replace with NA
 wrong_dates <- which(all_data$date <= as.POSIXct("2010/01/01"))
@@ -776,7 +776,7 @@ if (location_ok){
 }
 
 ## Remove files ####
-print("Tidying up files")
+print("Removing files")
 system(paste0("rm -rf ",
               data_path,
               "idw/*"))
@@ -798,7 +798,5 @@ system(paste0('rm -f ',
               format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
               format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
               ".txt"))
-system('mv *.tgz data_compressed/')
-system('mv t_series*.png timeseries/')
 
 updateStatus("Arrowtown script finised OK!")
