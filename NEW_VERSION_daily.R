@@ -95,45 +95,30 @@ time_avg <- '15 min'
 ndata <- 1
 nstep <- 1
 print("Getting data")
-base_url <- "https://dashboard.hologram.io/api/1/csr/rdm?"
 
-while (ndata >= 1){
-  if (nstep == 1){
-    print("First 1000 fetch")
-    print(nstep)
-    built_url <- paste0(base_url,
-                        "topicnames=",wanted_tags,"&",
-                        "timestart=",t_start,"&",
-                        "timeend=",t_end,"&",
-                        "limit=1000&",
-                        "orgid=",secret_hologram$orgid,"&",
-                        "apikey=",secret_hologram$apikey)
-    req2 <- curl_fetch_memory(built_url)
-    jreq2_tmp <- fromJSON(rawToChar(req2$content))$data
-    jreq2 <- jreq2_tmp
-  } else {
-    print("Next 1000 fetch")
-    print(nstep)
-    built_url <- paste0(base_url,
-                        "topicnames=",wanted_tags,"&",
-                        "timestart=",t_start,"&",
-                        "timeend=",t_end,"&",
-                        "limit=1000&",
-                        "startat=",startat,"&",
-                        "orgid=",secret_hologram$orgid,"&",
-                        "apikey=",secret_hologram$apikey)
-    req2 <- curl_fetch_memory(built_url)
-    jreq2_tmp <- fromJSON(rawToChar(req2$content))$data
-    jreq2 <- append(jreq2,fromJSON(rawToChar(req2$content))$data)
-  }
-  
-  print(ndata <- length(jreq2_tmp))
-  if (ndata < 1){
-    break
-  }
-  startat <- fromJSON(rawToChar(req2$content))$lastid
-  nstep <- nstep + 1
-  print(jreq2_tmp[[ndata]]$logged)
+base_url <- "https://dashboard.hologram.io/api/1/csr/rdm?"
+print("First 1000 fetch")
+print(nstep)
+built_url <- paste0(base_url,
+                    "topicnames=",wanted_tags,"&",
+                    "timestart=",t_start,"&",
+                    "timeend=",t_end,"&",
+                    "limit=1000&",
+                    "orgid=",secret_hologram$orgid,"&",
+                    "apikey=",secret_hologram$apikey)
+req2 <- curl_fetch_memory(built_url)
+jreq2_tmp <- fromJSON(rawToChar(req2$content))$data
+jreq2 <- jreq2_tmp
+
+base_url <- "https://dashboard.hologram.io"
+
+while (fromJSON(rawToChar(req2$content))$continues){
+  print("Next 1000 fetch")
+  built_url <- paste0(base_url,
+                      fromJSON(rawToChar(req2$content))$links[3])
+  req2 <- curl_fetch_memory(built_url)
+  jreq2_tmp <- fromJSON(rawToChar(req2$content))$data
+  jreq2 <- append(jreq2,fromJSON(rawToChar(req2$content))$data)
 }
 
 ndata <- length(jreq2)
@@ -145,7 +130,10 @@ cores <- detectCores()
 cl <- makeCluster(2) #not to overload your computer
 registerDoParallel(cl)
 
-all_data <- foreach(i=1:ndata,.packages=c("base64enc","RJSONIO"),.combine=rbind) %dopar%
+all_data <- foreach(i=1:ndata,
+                    .packages=c("base64enc","RJSONIO"),
+                    .combine=rbind,
+                    .errorhandling = 'remove') %dopar%
 {
   c_data <- data.frame(id = 1)
   c_data$PM1 <- NA
@@ -162,16 +150,8 @@ all_data <- foreach(i=1:ndata,.packages=c("base64enc","RJSONIO"),.combine=rbind)
   c_data$deviceid <- NA
   c_data$tags <- NA
   xxx <- rawToChar(base64decode(fromJSON(jreq2[[i]]$data)$data))
-  x_payload <- try(fromJSON(xxx),silent = TRUE)
-  if (inherits(x_payload,"try-error")) {
-    c_data
-    next
-  }
+  x_payload <- fromJSON(xxx)
   payload <- unlist(x_payload)
-  if (length(payload)<5){
-    c_data
-    next
-  }
   # {"PM1":4,"PM2.5":6,"PM10":6,"GAS1":-999,"Tgas1":0,"GAS2":204,"Temperature":7.35,"RH":80.85,"recordtime":"2018/07/11;00:21:01"}
   c_data$PM1 <- as.numeric(payload[1])
   c_data$PM2.5 <- as.numeric(payload[2])
@@ -258,8 +238,11 @@ if (location_ok){
 cl <- makeCluster(2) #not to overload your computer
 registerDoParallel(cl)
 
-all_data.tavg <- foreach(i=1:length(device_ids),.packages=c("openair"),.combine=rbind) %dopar%
-{
+all_data.tavg <- foreach(i=1:length(device_ids),
+                         .packages=c("openair"),
+                         .combine=rbind,
+                         .errorhandling = 'remove') %dopar%
+  {
   device_now <- subset(all_devices,id==device_ids[i])
   some_data <- subset(all_data, serialn == device_now$name)
   avg_data <- timeAverage(some_data,

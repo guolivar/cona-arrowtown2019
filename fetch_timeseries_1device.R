@@ -23,7 +23,7 @@ shelf(readr,
       dplyr,
       RColorBrewer,
       purrr,
-      magick)
+      magick,lib = '/tmp/')
 
 # Read the secrets
 secret_hologram <- read_delim("./secret_hologram.txt", 
@@ -33,7 +33,8 @@ base_url <- "https://dashboard.hologram.io/api/1/devices?"
 tag <- "odin"
 built_url <- paste0(base_url,
                     "orgid=",secret_hologram$orgid,"&",
-                    "tagname=",tag,"&",
+                    "limit=500&",
+#                    "tagname=",tag,"&",
                     "apikey=",secret_hologram$apikey)
 req1 <- curl_fetch_memory(built_url)
 jreq1 <- fromJSON(rawToChar(req1$content))$data
@@ -45,14 +46,15 @@ for (i in (1:nsites)){
 }
 
 # Choose ODIN
-i_dev <- grep(x=curr_data$ODIN,pattern = '0180')
+i_dev <- grep(x=curr_data$ODIN,pattern = '0040')
 
 ## Get the timeseries data #####
 # UTC time start
 x_now <- Sys.time()
+#x_now <- as.numeric(as.POSIXct("2019/10/23 12:00:00",tz = "GMT"))
 print(x_now)
 # UTC time start
-t_start <- as.numeric(as.POSIXct("2018/08/02 12:00:00",tz = "GMT-12"))
+t_start <- as.numeric(as.POSIXct("2019/10/20 22:00:00",tz = "GMT"))
 
 # UTC time end ... now
 t_end <- floor(as.numeric(x_now))
@@ -118,8 +120,6 @@ c_data$Temperature <- NA
 c_data$RH <- NA
 c_data$date <- as.POSIXct(jreq2[[ndata]]$logged,format = "%Y-%m-%d %H:%M:%OS",tz="UTC")
 c_data$timestamp <- c_data$date
-c_data$lat <- curr_data$lat[i_dev]
-c_data$lon <- curr_data$lon[i_dev]
 c_data$serialn <- curr_data$ODIN[i_dev]
 
 for (i in (1:ndata)){
@@ -170,10 +170,20 @@ rm(c_data)
 
 # Plot data ####
 avg_plot <- '10 min'
-timePlot(all_data,pollutant = c('PM1','PM2.5','PM10'),main = curr_data$ODIN[i_dev],avg.time = avg_plot,group = TRUE,ylim=c(0,100))
+timePlot(all_data
+         ,pollutant = c('PM1','PM2.5','PM10')
+         ,main = curr_data$ODIN[i_dev]
+         ,avg.time = avg_plot
+         ,group = TRUE
+         ,ylim=c(0,100)
+         )
 #scatterPlot(all_data,x='PM2.5',y='PM10',avg.time = avg_plot,linear = TRUE)
 #scatterPlot(all_data,x='PM1',y='PM2.5',avg.time = avg_plot,linear = TRUE)
 #scatterPlot(all_data,x='PM1',y='PM10',avg.time = avg_plot,linear = TRUE)
 
 #plot(all_data$date[1:(i-2)],all_data$date[2:(i-1)] - all_data$date[1:(i-2)],main = curr_data$ODIN[i_dev],ylim = c(-65,-55))
   
+
+ggplot(all_data.tavg)+
+  geom_point(aes(x=PM10,y=PM2.5))
+scatterPlot(all_data,x='PM10',y='PM2.5',linear = TRUE)
