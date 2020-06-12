@@ -43,16 +43,32 @@ data_path <- "./"
 # Read the secrets
 secret_hologram <- read_delim("./secret_hologram.txt", 
                               " ", escape_double = FALSE, trim_ws = TRUE)
-wanted_tag_human <- "arrowtown2020"
+# Get the tag list
+base_url <- "https://dashboard.hologram.io/api/1/devices/tags?"
+built_url <- paste0(base_url,
+                    "orgid=",secret_hologram$orgid,"&",
+                    "apikey=",secret_hologram$apikey)
+req1 <- curl_fetch_memory(built_url)
+jreq1 <- fromJSON(rawToChar(req1$content))$data$tags
+ntags <- length(jreq1)
+all_tags <- data.frame(id = (1:ntags),name = NA,topic = NA)
 
-# Fetch the ODIN details
-# THIS VERSION ONLY FETCHES ODIN WITH WANTED TAG
+for (i in (1:ntags)){
+  all_tags$id[i] <- jreq1[[i]]$id
+  all_tags$name[i] <- jreq1[[i]]$name
+  all_tags$topic[i] <- paste0("_TAG_",jreq1[[i]]$id,"_")
+}
+wanted_tags_human <- c("arrowtown2019")
+tags <- subset(all_tags,name %in% wanted_tags_human)
+wanted_tags <-paste(tags$topic,collapse = ",")
+print(wanted_tags)
+
+# Fetch the ODIN names
 base_url <- "https://dashboard.hologram.io/api/1/devices?"
 built_url <- paste0(base_url,
                     "limit=500&",
                     "orgid=",secret_hologram$orgid,"&",
-                    "apikey=",secret_hologram$apikey,"&",
-                    "tagname=",wanted_tag_human)
+                    "apikey=",secret_hologram$apikey)
 req1 <- curl_fetch_memory(built_url)
 jreq1 <- fromJSON(rawToChar(req1$content))$data
 ndevices <- length(jreq1)
@@ -74,7 +90,6 @@ t_start <- floor(as.numeric(x_now) - 24 * 3600)
 t_end <- floor(as.numeric(x_now))
 # Set the averaging interval
 time_avg <- '15 min'
-tavg_prefix <- '_15min_'
 # This is for the averagin
 x_start <- x_now - 25 * 3600
 
@@ -85,6 +100,7 @@ for (c_deviceid in all_devices$id){
   print("First 1000 fetch")
   built_url <- paste0(base_url,
                       "deviceid=",c_deviceid,"&",
+                      "topicnames=",wanted_tags,"&",
                       "timestart=",t_start,"&",
                       "timeend=",t_end,"&",
                       "limit=1000&",
@@ -190,20 +206,19 @@ tmp_error_catching <- try(all_data$date[wrong_dates] <- all_data$timestamp[wrong
 wrong_dates <- which(all_data$date <= as.POSIXct("2010/01/01"))
 tmp_error_catching <- try(all_data$date[wrong_dates] <- NA,
                           silent = TRUE)
+
+# Get devices locations
+proj4string_NZTM <- CRS('+init=epsg:2193')
+proj4string_latlon <- CRS('+init=epsg:4326')
+odin_locations <- read_delim(paste0(data_path,"odin_locations.txt"),
+                             "\t", escape_double = FALSE, trim_ws = TRUE)
 curr_data <- data.frame(ODIN = unique(all_data$serialn))
 curr_data$lat <- NA
 curr_data$lon <- NA
 ndev <- length(curr_data$ODIN)
-
 if (location_ok){
-  # Get devices locations
-  proj4string_NZTM <- CRS('+init=epsg:2193')
-  proj4string_latlon <- CRS('+init=epsg:4326')
-  odin_locations <- read_delim(paste0(data_path,"odin_locations.txt"),
-                               "\t", escape_double = FALSE, trim_ws = TRUE)
   for (i in (1:ndev)){
-    end_str <- nchar(as.character(curr_data$ODIN[i]))
-    loc_id <- which(substr(odin_locations$Serialn,7,11)==substr(curr_data$ODIN[i],end_str - 11,end_str - 8))
+    loc_id <- which(substr(odin_locations$Serialn,7,11)==substr(curr_data$ODIN[i],6,9))
     if (length(loc_id)>0){
       #p <- project(cbind(odin_locations$Easting[loc_id],odin_locations$Northing[loc_id]),proj = proj4string,inv = TRUE)
       curr_data$lon[i] <- odin_locations$lon[loc_id]
@@ -262,16 +277,14 @@ readr::write_csv(all_data,paste0(data_path,
                                  format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
                                  ".txt"),append = FALSE)
 readr::write_csv(all_data.tavg,paste0(data_path,
-                                      'all_data',
-                                      tavg_prefix,
+                                      'all_dataAVG',
                                       format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
                                       format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
                                       ".txt"),append = FALSE)
 
 # Plot time series ####
 plot_tseries <- ggplot(data.frame(all_data.tavg),aes(x=date)) +
-  geom_line(aes(y=PM2.5,colour=serialn)) +
-  coord_cartesian(ylim = c(0, 300))
+  geom_line(aes(y=PM2.5,colour=serialn))
 ggsave(filename = paste0(data_path,
                          't_series_',
                          format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
@@ -281,40 +294,7 @@ ggsave(filename = paste0(data_path,
        width = 12,
        height = 6,
        units = 'in')
-
-# Plot device dat availability
-all_data$available <- NA
-all_data$flat_battery <- NA
-label_data <- all_data[(1:length(unique(all_data$deviceid))),]
-
-i <- 1
-for (devID in unique(all_data$deviceid)){
-  all_data$available[all_data$deviceid==devID] <- is.numeric(all_data$PM2.5[all_data$deviceid==devID]) * i
-  all_data$flat_battery[all_data$deviceid==devID] <- stringi::stri_detect(all_data$tags[all_data$deviceid==devID],fixed= "report") * i
-  label_data$available[i] <- i
-  label_data$serialn[i] <- all_data$serialn[all_data$deviceid==devID][1]
-  i <- i+1
-}
-all_data$flat_battery[all_data$flat_battery==0] <- NA
-
-plot_availability <- ggplot(data.frame(all_data),aes(x=date)) +
-  geom_point(aes(y=available,colour=serialn)) +
-  geom_point(aes(y=flat_battery),colour='black',shape=25,fill='black') +
-  ggrepel::geom_label_repel(data = label_data,aes(x=date,y=available,label=serialn)) +
-  theme(legend.position = "none")
-
-ggsave(filename = paste0(data_path,
-                         'availability_',
-                         format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
-                         format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
-                         ".png"),
-       plot = plot_availability,
-       width = 12,
-       height = 6,
-       units = 'in')
-
-
-# Upload timeseries plots
+# Upload timeseries plot
 RCurl::ftpUpload(paste0(data_path,
                         't_series_',
                         format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
@@ -322,17 +302,6 @@ RCurl::ftpUpload(paste0(data_path,
                         ".png"),
                  paste0("ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/",
                         't_series_',
-                        format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
-                        format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
-                        ".png"))
-
-RCurl::ftpUpload(paste0(data_path,
-                        'availability_',
-                        format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
-                        format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
-                        ".png"),
-                 paste0("ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/",
-                        'availability_',
                         format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
                         format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
                         ".png"))
@@ -353,14 +322,12 @@ system(paste0("tar -zcvf ",
 
 system(paste0("tar -zcvf ",
               data_path,
-              'all_data',
-              tavg_prefix,
+              'all_dataAVG',
               format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
               format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
               ".tgz ",
               data_path,
-              'all_data',
-              tavg_prefix,
+              'all_dataAVG',
               format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
               format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
               ".txt"))
@@ -379,45 +346,34 @@ RCurl::ftpUpload(paste0(data_path,
                         format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
                         ".tgz"))
 RCurl::ftpUpload(paste0(data_path,
-                        'all_data',
-                        tavg_prefix,
+                        'all_dataAVG',
                         format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
                         format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
                         ".tgz"),
                  paste0("ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/",
-                        'all_data',
-                        tavg_prefix,
+                        'all_dataAVG_',
                         format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
                         format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
                         ".tgz"))
 
-updateStatus("Data availability from Arrowtown - UTC time", mediaPath = paste0(data_path,
-                                                                               'availability_',
-                                                                               format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
-                                                                               format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
-                                                                               ".png"))
+
 
 updateStatus("Latest time series from Arrowtown - UTC time", mediaPath = paste0(data_path,
                                                                                 't_series_',
                                                                                 format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
                                                                                 format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
                                                                                 ".png"))
-
-
-
 system(paste0('rm -f ',
               data_path,
-              'all_data',
-              tavg_prefix,
+              'all_dataAVG',
               format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
               format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
               ".txt"))
 
-
+# remove NA on coordinates
+curr_data <- subset(curr_data,!is.na(lat))
+all_data.tavg <- subset(all_data.tavg,!is.na(lat))
 if (location_ok){
-  # remove NA on coordinates
-  curr_data <- subset(curr_data,!is.na(lat))
-  all_data.tavg <- subset(all_data.tavg,!is.na(lat))
   coordinates(curr_data) <- ~ lon + lat
   proj4string(curr_data) <- proj4string_latlon
   coordinates(all_data.tavg) <- ~ lon + lat
@@ -831,15 +787,11 @@ system(paste0('rm -f ',
               ".txt"))
 system(paste0('rm -f ',
               data_path,
-              'all_data',
-              tavg_prefix,
+              'all_dataAVG',
               format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
               format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
               ".txt"))
 system('mv *.tgz data_compressed/')
 system('mv t_series*.png timeseries/')
 
-#Added timestamps to avoid repeating the same tweet if this is run too often
-tweet_status <- updateStatus(paste(format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
-                                   "Arrowtown script finished OK:",
-                                   format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d")))
+updateStatus("Arrowtown script finished OK!")
