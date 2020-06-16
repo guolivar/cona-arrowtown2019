@@ -25,6 +25,8 @@ library(twitteR)
 library(parallel)
 library(doParallel)
 
+
+
 ##### Some switches to control the run
 send2youtube <- TRUE
 send2FTP <- TRUE
@@ -73,7 +75,7 @@ for (i in (1:ndevices)){
 # UTC time start ... 24 hours ago
 x_now <- Sys.time()
 # This is to make a run in the past
-# x_now <- as.POSIXct("2019-08-22 18:00:00")
+ x_now <- as.POSIXct("2020-06-15 18:00:00")
 print(x_now)
 t_start <- floor(as.numeric(x_now) - 24 * 3600)
 # UTC time end ... now
@@ -397,6 +399,7 @@ if (send2FTP){
                           format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
                           ".tgz"))
 }
+
 if (tweetit) {
   updateStatus("Data availability from Arrowtown - UTC time", mediaPath = paste0(data_path,
                                                                                  'availability_',
@@ -409,8 +412,8 @@ if (tweetit) {
                                                                                   format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
                                                                                   format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
                                                                                   ".png"))
-
 }
+
 
 system(paste0('rm -f ',
               data_path,
@@ -786,38 +789,43 @@ if (location_ok){
   
   
   ## Upload to youtube ####
-  print("Upload IDW to youtube")
-  system(paste0("youtube-upload --title=\"Arrowtown ",
-                format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d %H:%M"),
-                " to ",
-                format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d %H:%M"),
-                "\" --privacy=unlisted --client-secrets=client_secrets.json ",
-                data_path,
-                "idw/",
-                format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
-                format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
-                ".mp4 --playlist=\"Arrowtown 2019 - ODIN\""))
-  
-  print("Upload Krige to youtube")
-  system(paste0("youtube-upload --title=\"Arrowtown ",
-                format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d %H:%M"),
-                " to ",
-                format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d %H:%M"),
-                " AutoKrige\" --privacy=unlisted --client-secrets=client_secrets.json ",
-                data_path,
-                "autokrig/",
-                format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
-                format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
-                ".mp4 --playlist=\"Arrowtown 2019 - ODIN - AutoKrige\""))
-  
+  if (send2youtube) {
+    print("Upload IDW to youtube")
+    system(paste0("youtube-upload --title=\"Arrowtown ",
+                  format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d %H:%M"),
+                  " to ",
+                  format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d %H:%M"),
+                  "\" --privacy=unlisted --client-secrets=client_secrets.json ",
+                  data_path,
+                  "idw/",
+                  format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
+                  format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
+                  ".mp4 --playlist=\"Arrowtown 2019 - ODIN\""))
+    
+    print("Upload Krige to youtube")
+    system(paste0("youtube-upload --title=\"Arrowtown ",
+                  format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d %H:%M"),
+                  " to ",
+                  format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d %H:%M"),
+                  " AutoKrige\" --privacy=unlisted --client-secrets=client_secrets.json ",
+                  data_path,
+                  "autokrig/",
+                  format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
+                  format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
+                  ".mp4 --playlist=\"Arrowtown 2019 - ODIN - AutoKrige\""))
+  }
   # Upload files
   if (send2FTP) {
     print("Upload NC files")
     RCurl::ftpUpload(paste0(data_path,"odin_idw.nc"),
-                     "ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/odin_idw.nc")
+                     paste0("ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/special_run/odin_idw_",
+                            format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
+                            ".nc"))
     RCurl::ftpUpload(paste0(data_path,"odin_idw2.nc"),
-                     "ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/odin_idw2.nc")
-  }  
+                     paste0("ftp://ftp.niwa.co.nz/incoming/GustavoOlivares/odin_arrowtown/special_run/odin_idw2_",
+                            format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
+                            ".nc"))
+  }
 }
 
 ## Remove files ####
