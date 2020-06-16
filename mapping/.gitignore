@@ -4,4 +4,4 @@ all*.tgz
 *.pdf
 *.nc
 *.Rdata
-
+secret_*

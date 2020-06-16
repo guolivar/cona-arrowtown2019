@@ -32,25 +32,33 @@ send2youtube <- TRUE
 send2FTP <- TRUE
 tweetit <- FALSE
 
+##### Set the working directory DB ####
+setwd(paste0(scriptPath(),"/mapping/"))
+data_path <- "./"
+##### Read the secrets (these files are not part of the repo) ####
+secret_twitter <- read_delim("./secret_twitter.txt", 
+                              " ", escape_double = FALSE, trim_ws = TRUE)
+secret_google <- read_delim("./secret_googlemaps.txt", 
+                             " ", escape_double = FALSE, trim_ws = TRUE)
+secret_hologram <- read_delim("./secret_hologram.txt", 
+                              " ", escape_double = FALSE, trim_ws = TRUE)
+
 if (tweetit){
-  setup_twitter_oauth(consumer_key = "XSAlq3HMJyH1tQlYrgnGque8F",
-                      access_token = "1144053097313886208-DIVDY1F2jqh0pNbtJFz7Nxja3It3Xt",
-                      consumer_secret = "1NOYPT7iJ3tF66NK333xcNe8mOjf15WoZGXDsjuK1jVG5dvOPJ",
-                      access_secret = "x1ffRfIUltZkHKnRPBUK8oiouhcnUCp7VHCgL4W5rEdYE")
+  setup_twitter_oauth(consumer_key = secret_twitter[1],
+                      access_token = secret_twitter[2],
+                      consumer_secret = secret_twitter[3],
+                      access_secret = secret_twitter[4])
 }
 ##### Register google's mapping key
-register_google(key = "AIzaSyACi3pNvPQTxZWx5u0nTtke598dPqdgySg")
+register_google(key = secret_google[1])
 
 ##### Location info up to date? ####
 location_ok <- TRUE
 
-##### Set the working directory DB ####
-setwd("~/repositories/cona-arrowtown2019/mapping/")
-data_path <- "./"
+
 ##### Read the credentials file (ignored by GIT repository) ####
 # Read the secrets
-secret_hologram <- read_delim("./secret_hologram.txt", 
-                              " ", escape_double = FALSE, trim_ws = TRUE)
+
 wanted_tag_human <- "arrowtown2020"
 
 # Fetch the ODIN details
