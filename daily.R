@@ -1,4 +1,7 @@
 ##### Load relevant packages #####
+library(tictoc)
+tic.clearlog()
+tic("Whole script")
 library(readr)
 library(reshape2)
 library(automap)
@@ -24,48 +27,39 @@ library(magick)
 library(twitteR)
 library(parallel)
 library(doParallel)
-# Auxiliary function
-scriptPath <- function() {
-  getSrcDirectory(scriptPath);
-}
+
 
 ##### Some switches to control the run
 send2youtube <- TRUE
 send2FTP <- TRUE
-tweetit <- FALSE
-##### Set the working directory DB ####
-setwd(paste0(scriptPath(),"/mapping/"))
-data_path <- "./"
-##### Read the secrets (these files are not part of the repo) ####
-twitter_secrets <- read_delim("./secret_twitter.txt", 
-                              " ", 
-                              escape_double = FALSE,
-                              trim_ws = TRUE, 
-                              col_names = FALSE)
-google_secrets <- read_delim("./secret_googlemaps.txt", 
-                             " ", 
-                             escape_double = FALSE,
-                             trim_ws = TRUE, 
-                             col_names = FALSE)
-
-if (tweetit){
-  setup_twitter_oauth(consumer_key = twitter_secrets$X1[1],
-                      access_token = twitter_secrets$X1[2],
-                      consumer_secret = twitter_secrets$X1[3],
-                      access_secret = twitter_secrets$X1[4])
-}
-##### Register google's mapping key
-register_google(key = google_secrets$X1[1])
-
+tweetit <- TRUE
 ##### Location info up to date? ####
 location_ok <- TRUE
+##### Set the working directory DB ####
+print(basepath <- path.expand("~"))
+setwd(paste0(basepath,"/repositories/cona-arrowtown2019/mapping/"))
+data_path <- "./"
 
-
-##### Read the credentials file (ignored by GIT repository) ####
-# Read the secrets
+##### Read the secrets (these files are not part of the repo) ####
+secret_twitter <- read_delim("./secret_twitter.txt", 
+                             " ", escape_double = FALSE, trim_ws = TRUE,col_names = FALSE)
+secret_google <- read_delim("./secret_googlemaps.txt", 
+                            " ", escape_double = FALSE, trim_ws = TRUE,col_names = FALSE)
 secret_hologram <- read_delim("./secret_hologram.txt", 
                               " ", escape_double = FALSE, trim_ws = TRUE)
+
+if (tweetit){
+  setup_twitter_oauth(consumer_key = as.character(secret_twitter$X1[1]),
+                      access_token = as.character(secret_twitter$X1[2]),
+                      consumer_secret = as.character(secret_twitter$X1[3]),
+                      access_secret = as.character(secret_twitter$X1[4]))
+}
+##### Register google's mapping key
+register_google(key = as.character(secret_google$X1[1]))
+
 wanted_tag_human <- "arrowtown2020"
+
+tic("Fetch ODIN data")
 
 # Fetch the ODIN details
 # THIS VERSION ONLY FETCHES ODIN WITH WANTED TAG
@@ -88,8 +82,8 @@ for (i in (1:ndevices)){
 ## Get the timeseries data #####
 # UTC time start ... 24 hours ago
 x_now <- Sys.time()
-# This is to make a run in the past
-# x_now <- as.POSIXct("2019-08-22 18:00:00")
+# This is to make a run in the past UTC!!!
+# x_now <- as.POSIXct("2020-06-19 18:00:00")
 print(x_now)
 t_start <- floor(as.numeric(x_now) - 24 * 3600)
 # UTC time end ... now
@@ -142,8 +136,12 @@ print(ndata <- length(jreq2))
 
 # We'll do this in parallel because it takes A LONG time with a few 100k records
 #setup parallel backend to use many processors
-cores <- detectCores()
-cl <- makeCluster(2) #not to overload your computer
+
+toc(log = TRUE,quiet = TRUE)
+tic("Parse data")
+
+ncores <- detectCores()
+cl <- makeCluster(ncores-1) #not to overload your computer
 registerDoParallel(cl)
 
 all_data <- foreach(i=1:ndata,
@@ -252,8 +250,14 @@ if (location_ok){
 
 
 # Calculate averaged time series
-cl <- makeCluster(2) #not to overload your computer
+
+toc(log = TRUE,quiet = TRUE)
+tic("Time series")
+
+ncores <- detectCores()
+cl <- makeCluster(ncores-1) #not to overload your computer
 registerDoParallel(cl)
+
 
 all_data.tavg <- foreach(i=1:length(device_ids),
                          .packages=c("openair"),
@@ -428,6 +432,7 @@ if (tweetit) {
 
 }
 
+
 system(paste0('rm -f ',
               data_path,
               'all_data',
@@ -436,6 +441,7 @@ system(paste0('rm -f ',
               format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
               ".txt"))
 
+toc(log = TRUE,quiet = TRUE)
 
 if (location_ok){
   # remove NA on coordinates
@@ -482,181 +488,105 @@ if (location_ok){
   ndates <- length(all_dates)
   breaks <- as.numeric(quantile((1:ndates),c(0,0.5,1), type = 1))
   nbreaks <- length(breaks)
-  i <- 0
-  for (d_slice in (1:ndates)){
-    c_data <- subset(all_data.tavg,subset = (date==all_dates[d_slice]))
-    
-    if (length(unique(c_data$serialn))<2){
-      next
-    }
-    valid_dates[d_slice] <- TRUE
-    surf.krig.temp <- try(autoKrige(PM2.5 ~ 1,data=c_data,new_data = grid, input_data=c_data),
-                          silent = TRUE)
-    if (inherits(surf.krig.temp,"try-error")){
-      surf.krig <- idw(PM2.5 ~ 1,newdata = grid, locations = c_data, idp = 1,na.action = na.omit)
-      surf.krig$timestamp <-d_slice
-      proj4string(surf.krig) <- CRS('+init=epsg:2193')
-    } else {
-      surf.krig <- surf.krig.temp$krige_output
-      surf.krig$timestamp <-d_slice
-      proj4string(surf.krig) <- CRS('+init=epsg:2193')
-    }
-    
-    surf.idw <- idw(PM2.5 ~ 1,newdata = grid, locations = c_data, idp = 1,na.action = na.omit)
-    surf.idw$timestamp <-d_slice
-    proj4string(surf.idw) <- proj4string_NZTM
-    
-    surf.idw2 <- idw(PM2.5 ~ 1,newdata = grid, locations = c_data, idp = 2)
-    surf.idw2$timestamp <-d_slice
-    proj4string(surf.idw2) <- proj4string_NZTM
-    
-    if (i==0){
-      to_rast.krig <- surf.krig
-      r0.krig <- rasterFromXYZ(cbind(to_rast.krig@coords,to_rast.krig@data$var1.pred))
-      crs(r0.krig) <- '+init=epsg:2193'
-      raster_cat.krig <- r0.krig
-      
-      to_rast.idw <- surf.idw
-      r0.idw <- rasterFromXYZ(cbind(surf.idw@coords,surf.idw$var1.pred))
-      crs(r0.idw) <- '+init=epsg:2193'
-      raster_cat.idw<- r0.idw
-      
-      to_rast.idw2 <- surf.idw2
-      r0.idw2 <- rasterFromXYZ(cbind(surf.idw2@coords,surf.idw2$var1.pred))
-      crs(r0.idw2) <- '+init=epsg:2193'
-      raster_cat.idw2<- r0.idw2
-      i <- 1
-    }
-    else {
-      to_rast.krig <- surf.krig
-      r0.krig <- rasterFromXYZ(cbind(to_rast.krig@coords,to_rast.krig@data$var1.pred))
-      names(r0.krig) <- as.character(all_dates[d_slice])
-      crs(r0.krig) <- '+init=epsg:2193'
-      raster_cat.krig <- addLayer(raster_cat.krig,r0.krig)
-      
-      to_rast.idw <- surf.idw
-      r0.idw <- rasterFromXYZ(cbind(surf.idw@coords,surf.idw$var1.pred))
-      names(r0.idw) <- as.character(all_dates[d_slice])
-      crs(r0.idw) <- '+init=epsg:2193'
-      raster_cat.idw<- addLayer(raster_cat.idw,r0.idw)
-      
-      to_rast.idw2 <- surf.idw2
-      r0.idw2 <- rasterFromXYZ(cbind(surf.idw2@coords,surf.idw2$var1.pred))
-      names(r0.idw2) <- as.character(all_dates[d_slice])
-      crs(r0.idw2) <- '+init=epsg:2193'
-      raster_cat.idw2<- addLayer(raster_cat.idw2,r0.idw2)
-    }
-    rtpK <- rasterToPolygons(projectRaster(r0.krig,crs = "+proj=longlat +datum=WGS84"))
-    rtp <- rasterToPolygons(projectRaster(r0.idw,crs = "+proj=longlat +datum=WGS84"))
-    rtp2 <- rasterToPolygons(projectRaster(r0.idw2,crs = "+proj=longlat +datum=WGS84"))
-    points <- data.frame(spTransform(c_data,CRS('+init=epsg:4326')))
-    points$label <- substr(points$serialn,1,9)
-    
-    # Build the animation
-    map_out <- ggmap(ca) + geom_polygon(data = rtpK,aes(x = long, y = lat, group = group,
-                                                        fill = rep(rtpK[[1]], each = 5)),
-                                        size = 0,
-                                        alpha = 0.85) +
-      scale_fill_gradient(low="white", high="red",limits=c(0, cmax), name = "PM2.5", oob=squish) +
-      geom_point(data=points,aes(x=lon,y=lat),colour = "black", size = 3) +
-      geom_text(data=points,aes(x=lon,y=lat,label=label), hjust=0, colour = "gray") +
-      ggtitle(paste(as.character(all_dates[d_slice]+12*3600),"NZST"))
-    ggsave(filename=paste0(data_path,'autokrig/',format(all_dates[d_slice]+12*3600,format = "%Y-%m-%d %H:%M"),'.png'), plot=map_out, width=6, height=6, units = "in")
-    
-    map_out <- ggmap(ca) + geom_polygon(data = rtp,aes(x = long, y = lat, group = group,
-                                                       fill = rep(rtp[[1]], each = 5)),
-                                        size = 0,
-                                        alpha = 0.85) +
-      scale_fill_gradient(low="white", high="red",limits=c(0, cmax), name = "PM2.5", oob=squish) +
-      geom_point(data=points,aes(x=lon,y=lat),colour = "black", size = 3) +
-      geom_text(data=points,aes(x=lon,y=lat,label=label), hjust=0, colour = "gray") +
-      ggtitle(paste(as.character(all_dates[d_slice]+12*3600),"NZST"))
-    ggsave(filename=paste0(data_path,'idw/',format(all_dates[d_slice]+12*3600,format = "%Y-%m-%d %H:%M"),'.png'), plot=map_out, width=6, height=6, units = "in")
-    
-    map_out <- ggmap(ca) + geom_polygon(data = rtp2,aes(x = long, y = lat, group = group,
-                                                        fill = rep(rtp[[1]], each = 5)),
-                                        size = 0,
-                                        alpha = 0.8) +
-      scale_fill_gradient(low="white", high="red",limits=c(0, cmax), name = "PM2.5", oob=squish) +
-      geom_point(data=points,aes(x=lon,y=lat),colour = "black", size = 3) +
-      geom_text(data=points,aes(x=lon,y=lat,label=label), hjust=0, colour = "gray") +
-      ggtitle(paste(as.character(all_dates[d_slice]+12*3600),"NZST"))
-    ggsave(filename=paste0(data_path,'idw2/',format(all_dates[d_slice]+12*3600,format = "%Y-%m-%d %H:%M"),'.png'),
-           plot=map_out,
-           width=6,
-           height=6,
-           units = "in")
-    
-  }
-  save('raster_cat.krig',file = paste0(data_path,'raster_cat.krig.RData'))
+  
+  # IDW
+  
+  tic("Spatial")
+
+  ncores <- detectCores()
+  cl <- makeCluster(ncores-1) #not to overload your computer
+  registerDoParallel(cl)
+  
+  raster_cat.idw <- foreach(d_slice=1:ndates,
+                            .packages=c("gstat",
+                                        "sp",
+                                        "raster",
+                                        "rgdal",
+                                        "ggmap",
+                                        "ggplot2",
+                                        "scales"),
+                            .combine=addLayer,
+                            .errorhandling = 'remove') %dopar%
+                            {
+                              c_data <- subset(all_data.tavg,subset = (date==all_dates[d_slice]))
+                              surf <- idw(PM2.5 ~ 1,newdata = grid, locations = c_data, idp = 1,na.action = na.omit)
+                              surf$timestamp <-d_slice
+                              proj4string(surf) <- proj4string_NZTM
+                              to_rast <- surf
+                              r.pt <- rasterFromXYZ(cbind(to_rast@coords,surf$var1.pred))
+                              names(r.pt) <- format(all_dates[d_slice],format="%Y-%m-%d %H:%M:%S")
+                              crs(r.pt) <- '+init=epsg:2193'
+                              points <- data.frame(spTransform(c_data,CRS('+init=epsg:4326')))
+                              points$label <- substr(points$serialn,1,9)
+                              rtp <- rasterToPolygons(projectRaster(r.pt,crs = "+proj=longlat +datum=WGS84"))
+                              map_out <- ggmap(ca) + geom_polygon(data = rtp,aes(x = long, y = lat, group = group,
+                                                                                 fill = rep(rtp[[1]], each = 5)),
+                                                                  size = 0,
+                                                                  alpha = 0.85) +
+                                scale_fill_gradient(low="white", high="red",limits=c(0, cmax), name = "PM2.5", oob=squish) +
+                                geom_point(data=points,aes(x=lon,y=lat),colour = "black", size = 3) +
+                                geom_text(data=points,aes(x=lon,y=lat,label=label), hjust=0, colour = "gray") +
+                                ggtitle(paste(as.character(all_dates[d_slice]+12*3600),"NZST"))
+                              ggsave(filename=paste0(data_path,'idw/',format(all_dates[d_slice]+12*3600,format = "%Y-%m-%d %H:%M"),'.png'), plot=map_out, width=6, height=6, units = "in")
+                              r.pt
+                            }
+  stopCluster(cl)
+
+    # IDW2
+
+  ncores <- detectCores()
+  cl <- makeCluster(ncores-1) #not to overload your computer
+  registerDoParallel(cl)
+  
+  raster_cat.idw2 <- foreach(d_slice=1:ndates,
+                             .packages=c("gstat",
+                                         "sp",
+                                         "raster",
+                                         "rgdal",
+                                         "ggmap",
+                                         "ggplot2",
+                                         "scales"),
+                             .combine=addLayer,
+                             .errorhandling = 'remove') %dopar%
+                             {
+                               c_data <- subset(all_data.tavg,subset = (date==all_dates[d_slice]))
+                               surf <- idw(PM2.5 ~ 1,newdata = grid, locations = c_data, idp = 2,na.action = na.omit)
+                               surf$timestamp <-d_slice
+                               proj4string(surf) <- proj4string_NZTM
+                               to_rast <- surf
+                               r.pt <- rasterFromXYZ(cbind(to_rast@coords,surf$var1.pred))
+                               names(r.pt) <- format(all_dates[d_slice],format="%Y-%m-%d %H:%M:%S")
+                               crs(r.pt) <- '+init=epsg:2193'
+                               points <- data.frame(spTransform(c_data,CRS('+init=epsg:4326')))
+                               points$label <- substr(points$serialn,1,9)
+                               rtp <- rasterToPolygons(projectRaster(r.pt,crs = "+proj=longlat +datum=WGS84"))
+                               map_out <- ggmap(ca) + geom_polygon(data = rtp,aes(x = long, y = lat, group = group,
+                                                                                  fill = rep(rtp[[1]], each = 5)),
+                                                                   size = 0,
+                                                                   alpha = 0.85) +
+                                 scale_fill_gradient(low="white", high="red",limits=c(0, cmax), name = "PM2.5", oob=squish) +
+                                 geom_point(data=points,aes(x=lon,y=lat),colour = "black", size = 3) +
+                                 geom_text(data=points,aes(x=lon,y=lat,label=label), hjust=0, colour = "gray") +
+                                 ggtitle(paste(as.character(all_dates[d_slice]+12*3600),"NZST"))
+                               ggsave(filename=paste0(data_path,'idw2/',format(all_dates[d_slice]+12*3600,format = "%Y-%m-%d %H:%M"),'.png'), plot=map_out, width=6, height=6, units = "in")
+                               r.pt
+                             }
+  stopCluster(cl)
+  valid_dates <- as.POSIXct(substr(names(raster_cat.idw),2,100),format="%Y.%m.%d.%H.%M.%S") == all_dates
+
   save('raster_cat.idw',file = paste0(data_path,'raster_cat.idw.RData'))
   save('raster_cat.idw2',file = paste0(data_path,'raster_cat.idw2.Rdata'))
   
   print("Done with interpolating ...")
   
-  raster_cat_krig_LL <- projectRaster(raster_cat.krig,crs = "+proj=longlat +datum=WGS84")
   raster_cat_idw_LL <- projectRaster(raster_cat.idw,crs = "+proj=longlat +datum=WGS84")
   raster_cat_idw2_LL <- projectRaster(raster_cat.idw2,crs = "+proj=longlat +datum=WGS84")
-  save(list = c('raster_cat_krig_LL','raster_cat_idw_LL','raster_cat_idw2_LL'),file = paste0(data_path,"raster_odin_LL.RData"))
-}
+  save(list = c('raster_cat_idw_LL','raster_cat_idw2_LL'),file = paste0(data_path,"raster_odin_LL.RData"))
+  
+  toc(log = TRUE,quiet = TRUE)
 
-if (location_ok){
+
   print("Writing NetCDF files")
-  print("Krig")
-  # Write NetCDF files ####
-  # IDW
-  lat_dim <- unique(coordinates(raster_cat_krig_LL)[,2])
-  lon_dim <- unique(coordinates(raster_cat_krig_LL)[,1])
-  tim_dim <- all_dates[valid_dates ==1 ]
-  nc.krig <- create.nc("odin_krig.nc")
-  # Dimensions specifications
-  dim.def.nc(nc.krig, "time", unlim=TRUE)
-  dim.def.nc(nc.krig, "latitude",length(lat_dim))
-  dim.def.nc(nc.krig, "longitude",length(lon_dim))
-  # Variable specifications
-  var.def.nc(nc.krig,"time","NC_INT","time")
-  att.put.nc(nc.krig,"time","units","NC_CHAR","seconds since 1970-01-01 00:00:0.0")
-  att.put.nc(nc.krig,"time","long_name","NC_CHAR","time")
-  
-  var.def.nc(nc.krig,"latitude","NC_FLOAT","latitude")
-  att.put.nc(nc.krig,"latitude","units","NC_CHAR","degrees_north")
-  att.put.nc(nc.krig,"latitude","long_name","NC_CHAR","latitude")
-  att.put.nc(nc.krig,"latitude","standard_name","NC_CHAR","latitude")
-  
-  var.def.nc(nc.krig,"longitude","NC_FLOAT","longitude")
-  att.put.nc(nc.krig,"longitude","units","NC_CHAR","degrees_east")
-  att.put.nc(nc.krig,"longitude","long_name","NC_CHAR","longitude")
-  att.put.nc(nc.krig,"longitude","standard_name","NC_CHAR","longitude")
-  
-  var.def.nc(nc.krig,"pm2p5","NC_FLOAT",c("longitude","latitude","time"))
-  att.put.nc(nc.krig,"pm2p5","units","NC_CHAR","ug m**-3")
-  att.put.nc(nc.krig,"pm2p5","long_name","NC_CHAR","Mass concentration of PM2.5 ambient aerosol particles in air")
-  att.put.nc(nc.krig,"pm2p5","standard_name","NC_CHAR","mass_concentration_of_pm2p5_ambient_aerosol_particles_in_air")
-  att.put.nc(nc.krig,"pm2p5","cell_methods","NC_CHAR","time: mean (interval: 15 minutes)")
-  att.put.nc(nc.krig,"pm2p5","missing_value","NC_FLOAT",-999.9)
-  
-  # Global attributes
-  att.put.nc(nc.krig,"NC_GLOBAL","title","NC_CHAR","PM2.5 interpolated surface (AutoKrige)")
-  att.put.nc(nc.krig,"NC_GLOBAL","Conventions","NC_CHAR","CF-1.7")
-  att.put.nc(nc.krig,"NC_GLOBAL","Institution","NC_CHAR","NIWA (National Institute of Water and Atmospheric Research, Auckland, New Zealand)")
-  att.put.nc(nc.krig,"NC_GLOBAL","project_id","NC_CHAR","CONA - 2019")
-  att.put.nc(nc.krig,"NC_GLOBAL","history","NC_CHAR",paste0(format(max(all_data.tavg$date),format = "%Y%m%d"),
-                                                            " Data generated and formatted"))
-  att.put.nc(nc.krig,"NC_GLOBAL","comment","NC_CHAR","Data for visualisation only")
-  
-  # Load data
-  var.put.nc(nc.krig,"latitude",lat_dim)
-  var.put.nc(nc.krig,"longitude",lon_dim)
-  var.put.nc(nc.krig,"time",as.numeric(tim_dim))
-  rast_data <- getValues(raster_cat_krig_LL)[,(1:length(tim_dim))]
-  dim(rast_data) <- c(length(lon_dim),
-                      length(lat_dim),
-                      length(tim_dim))
-  var.put.nc(nc.krig,"pm2p5",rast_data)
-  
-  # Close the file and save
-  close.nc(nc.krig)
-  
   print("IDW")
   # Write NetCDF files ####
   # IDW
@@ -691,7 +621,7 @@ if (location_ok){
   att.put.nc(nc.idw,"pm2p5","missing_value","NC_FLOAT",-999.9)
   
   # Global attributes
-  att.put.nc(nc.idw,"NC_GLOBAL","title","NC_CHAR","PM2.5 interpolated surface (Inverse Square Distance)")
+  att.put.nc(nc.idw,"NC_GLOBAL","title","NC_CHAR","PM2.5 interpolated surface (Inverse Distance)")
   att.put.nc(nc.idw,"NC_GLOBAL","Conventions","NC_CHAR","CF-1.7")
   att.put.nc(nc.idw,"NC_GLOBAL","Institution","NC_CHAR","NIWA (National Institute of Water and Atmospheric Research, Auckland, New Zealand)")
   att.put.nc(nc.idw,"NC_GLOBAL","project_id","NC_CHAR","CONA - 2018")
@@ -768,16 +698,10 @@ if (location_ok){
   close.nc(nc.idw2)
   
   ## Create MP4 video ####
+  
+  tic("Create videos")
+
   print("Create videos")
-  system(paste0("ffmpeg -f image2 -r 6 -pattern_type glob -i '",
-                data_path,
-                "autokrig/",
-                "*.png' ",
-                data_path,
-                "autokrig/",
-                format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
-                format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
-                ".mp4"))
   
   system(paste0("ffmpeg -f image2 -r 6 -pattern_type glob -i '",
                 data_path,
@@ -814,18 +738,6 @@ if (location_ok){
                 format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
                 ".mp4 --playlist=\"Arrowtown 2019 - ODIN\""))
   
-  print("Upload Krige to youtube")
-  system(paste0("youtube-upload --title=\"Arrowtown ",
-                format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d %H:%M"),
-                " to ",
-                format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d %H:%M"),
-                " AutoKrige\" --privacy=unlisted --client-secrets=client_secrets.json ",
-                data_path,
-                "autokrig/",
-                format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),"_",
-                format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
-                ".mp4 --playlist=\"Arrowtown 2019 - ODIN - AutoKrige\""))
-  
   # Upload files
   if (send2FTP) {
     print("Upload NC files")
@@ -844,9 +756,7 @@ system(paste0("rm -rf ",
 system(paste0("rm -rf ",
               data_path,
               "idw2/*"))
-system(paste0("rm -rf ",
-              data_path,
-              "autokrig/*"))
+
 system(paste0('rm -f ',
               data_path,
               'all_data',
@@ -862,10 +772,20 @@ system(paste0('rm -f ',
               ".txt"))
 system('mv *.tgz data_compressed/')
 system('mv t_series*.png timeseries/')
+system('mv availability*.png timeseries/')
 
-#Added timestamps to avoid repeating the same tweet if this is run too often
+
+
+
+toc(log = TRUE,quiet = TRUE)
+toc(log = TRUE,quiet = TRUE)
+tictoc_report <- tic.log()
+writeLines(unlist(tictoc_report))
 if (tweetit) {
-  tweet_status <- updateStatus(paste(format(min(all_data.tavg$date) + 12*3600,format = "%Y%m%d"),
-                                   "Arrowtown script finished OK:",
-                                   format(max(all_data.tavg$date) + 12*3600,format = "%Y%m%d")))
+  tweet_status <- updateStatus(paste0("Arrowtown\n",
+                                      gsub(" elapsed",
+                                           "",
+                                           paste0(unlist(tictoc_report),
+                                                  collapse = "\n"))),
+                               bypassCharLimit = TRUE)
 }
